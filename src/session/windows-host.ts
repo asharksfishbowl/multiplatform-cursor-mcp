@@ -38,7 +38,7 @@ export function windowsHost(c: Config): SessionHost {
         foreground: foregroundWindow,
         stopPattern: () => loadStopPattern(p.stopPattern),
         async folderFor(started, agent) {
-            const folder = path.join(c.shots, `${started.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-')}-${agent}`)
+            const folder = path.join(c.shots, `${started.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')}-${agent}`)
             await mkdir(folder, { recursive: true })
             return folder
         },
