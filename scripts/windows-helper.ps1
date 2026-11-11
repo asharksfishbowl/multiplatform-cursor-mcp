@@ -48,7 +48,7 @@ function WindowOf([string]$Which) {
 function Line($W) { "$($W.Process) pid=$($W.Pid) rect=$($W.L),$($W.T),$($W.R),$($W.B)$(if ($W.Minimized) { ' minimized' }) '$($W.Title)'" }
 
 switch ($Action) {
-  # screenshot <png> [window] [maxWidth]: the whole desktop or one window's rectangle, saved whole at <png>; a copy at most maxWidth wide beside it (<png>.view.png).
+  # screenshot <png> [window] [maxWidth]: the whole desktop or one window's rectangle, saved whole at <png>; given maxWidth, a copy at most that wide beside it (<png>.view.png).
   'screenshot' {
     Add-Type -AssemblyName System.Drawing, System.Windows.Forms
     $V = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -63,7 +63,7 @@ switch ($Action) {
       $S = New-Object System.Drawing.Bitmap ([int]($Wd / $K)), ([int]($Ht / $K))
       $G = [System.Drawing.Graphics]::FromImage($S); $G.InterpolationMode = 'HighQualityBicubic'; $G.DrawImage($B, 0, 0, $S.Width, $S.Height); $G.Dispose()
       $S.Save("$Arg.view.png", [System.Drawing.Imaging.ImageFormat]::Png); $S.Dispose()
-    } else { Copy-Item $Arg "$Arg.view.png" }
+    } elseif ($Max -gt 0) { Copy-Item $Arg "$Arg.view.png" }
     $B.Dispose()
     "$X $Y $Wd $Ht $K"
   }
