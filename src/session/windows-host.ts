@@ -30,7 +30,7 @@ export function windowsHost(c: Config): SessionHost {
             const r = await lockScript(c, ['-Release', '-Token', token])
             return r.out.split(/\r?\n/).pop() ?? ''
         },
-        appendQueue: text => appendFile(p.queue, `${text}\n`, 'utf8'),
+        appendQueue: text => appendFile(c.queue, `${text}\n`, 'utf8'),
         async shoot(folder, name) {
             const shot = await screenshot(path.join(folder, `${name}.png`))
             return { path: shot.path, lines: await readText(shot) }
@@ -38,7 +38,7 @@ export function windowsHost(c: Config): SessionHost {
         foreground: foregroundWindow,
         stopPattern: () => loadStopPattern(p.stopPattern),
         async folderFor(started, agent) {
-            const folder = path.join(p.shots, `${started.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-')}-${agent}`)
+            const folder = path.join(c.shots, `${started.toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-')}-${agent}`)
             await mkdir(folder, { recursive: true })
             return folder
         },

@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import path from 'node:path'
 import { mkdir } from 'node:fs/promises'
-import { Config, paths } from '../config.js'
+import { Config } from '../config.js'
 import { screenshot, readText, viewImage } from '../services/windows/screen.js'
 import { findWindows, focusWindow, focusedIsPassword } from '../services/window-manager/windows-manager.js'
 import * as input from '../services/input-automation/input-service.js'
@@ -37,7 +37,7 @@ export function registerTools(server: McpServer, c: Config, sessions: DesktopSes
             await sessions.check(`${name}-check`)
             return path.join(s.folder, `${name}.png`)
         }
-        const folder = path.join(paths(c).shots, `looks-${stamp.slice(0, 8)}`)
+        const folder = path.join(c.shots, `looks-${stamp.slice(0, 8)}`)
         await mkdir(folder, { recursive: true })
         return path.join(folder, `${stamp}.png`)
     }

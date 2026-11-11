@@ -19,7 +19,7 @@ It began as a Cursor IDE bridge; those tools did not build (robotjs was never a 
 ## Rails, in the server
 
 - An acting tool outside the open session, or naming another session's id, is refused. One session at a time, at most 240 minutes; it ends itself when its minutes run out.
-- `begin_session <agent> <what> <minutes>` appends a `// DESKTOP:` block to the N.A.M.E.C checkout's `.dex/wildcard-queue.groovy` and holds `Global\NamecBuild`
+- `begin_session <agent> <what> <minutes>` appends a `// DESKTOP:` block to the config's `queue` file (N.A.M.E.C's `.dex/wildcard-queue.groovy`) and holds `Global\NamecBuild`
   (`Tools/Build/namec-build-lock.ps1 -Hold`); `end_session` releases it and closes the block.
 - Before and after each action the whole screen is pictured and read; a line matching the checkout's `Tools/Desktop/stop-pattern.txt` (a price, buy, purchase, checkout, payment,
   licence to accept, sign-in, password, code) ends the session: `STOP: <window>: it shows "<text>" at (x, y)`. Nothing is pressed on such a screen.
@@ -36,7 +36,7 @@ npm test
 node build/index.js --config <file.json>
 ```
 
-The config: `{ "host": "127.0.0.1", "port": 8010, "tokenFile": "…", "checkout": "C:\\…\\N.A.M.E.C", "engineRoot": "C:\\Program Files\\Epic Games\\UE_5.8", "stateFile": "…" }`.
+The config: `{ "host": "127.0.0.1", "port": 8010, "tokenFile": "…", "checkout": "C:\\…\\N.A.M.E.C", "queue": "…\\wildcard-queue.groovy", "shots": "…", "engineRoot": "C:\\Program Files\\Epic Games\\UE_5.8", "stateFile": "…" }`.
 Run it in the desktop session it drives (a scheduled task at sign-in, `/IT`): input and screenshots from another session, as ssh's, reach nothing.
 N.A.M.E.C's `Tools/Desktop/register-desktop-mcp.ps1` installs, configures and starts it that way.
 
