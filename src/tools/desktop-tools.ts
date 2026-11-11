@@ -15,10 +15,11 @@ const text = (t: string): Content => ({ type: 'text', text: t })
 
 let Queue: Promise<unknown> = Promise.resolve()
 function oneAtATime<T>(f: () => Promise<T>): Promise<T> {
-    const run = Queue.then(f, f)
+    const run = Queue.then(f)
     Queue = run.catch(() => undefined)
     return run
 }
+let Looks = 0
 
 export function registerTools(server: McpServer, c: Config, sessions: DesktopSessions): void {
     const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, f: (a: z.objectOutputType<S, z.ZodTypeAny>) => Promise<Content[]>) =>
@@ -27,13 +28,12 @@ export function registerTools(server: McpServer, c: Config, sessions: DesktopSes
             catch (e: any) { return { isError: true, content: [text(String(e?.message ?? e))] } }
         }) as any)
 
-    let looks = 0
     // Where a look's picture goes: the open session's folder, else one folder a day for looks outside a session.
     async function lookPath(): Promise<string> {
         const s = sessions.current()
         const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')
         if (s) {
-            const name = `${String(s.actions).padStart(2, '0')}-look-${++looks}`
+            const name = `${String(s.actions).padStart(2, '0')}-look-${++Looks}`
             await sessions.check(`${name}-check`)
             return path.join(s.folder, `${name}.png`)
         }
