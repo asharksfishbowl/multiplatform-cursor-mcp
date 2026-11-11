@@ -20,6 +20,12 @@ export function windowsHost(c: Config): SessionHost {
     const p = paths(c)
     return {
         now: () => new Date(),
+        async lockBusy() {
+            const r = await lockScript(c, ['-Status'])
+            const status = /status (.+)$/m.exec(r.out)?.[1]
+            if (r.code !== 0 || !status) throw new Error(`namec-build-lock -Status gave no status (exit ${r.code}): ${r.out}`)
+            return status === 'free, 0 waiting' ? null : status
+        },
         async holdLock(label, minutes) {
             const r = await lockScript(c, ['-Hold', label, '-EngineRoot', c.engineRoot, '-Minutes', String(minutes)])
             const token = /-Release -Token (\w+)/.exec(r.out)?.[1]

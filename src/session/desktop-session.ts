@@ -7,7 +7,8 @@ import { stopHit } from './stop-words.js'
 /** What a session needs of the machine; the server gives the real one, the tests a fake. */
 export interface SessionHost {
     now(): Date
-    /** Holds Global\NamecBuild; resolves with the hold's token once held. */
+    /** Global\NamecBuild's holder and waiters, null when free with none waiting; holdLock resolves with the token once held. */
+    lockBusy(): Promise<string | null>
     holdLock(label: string, minutes: number): Promise<string>
     releaseLock(token: string): Promise<string>
     appendQueue(text: string): Promise<void>
@@ -43,6 +44,8 @@ export class DesktopSessions {
         if (!(minutes >= 1 && minutes <= 240)) throw new Error('minutes must be 1 to 240')
         if (!what.trim()) throw new Error('say what the session is for')
         if (this.open) throw new Error(`a session is open: ${this.open.agent}, '${this.open.what}', until ${this.open.deadline}`)
+        const busy = await this.host.lockBusy()
+        if (busy) throw new Error(`begin_session refused: Global\\NamecBuild is ${busy}; a waiting hold cannot be called off, so begin again once it is free`)
         this.pattern = this.host.stopPattern()
         const started = this.host.now()
         const folder = await this.host.folderFor(started, agent)

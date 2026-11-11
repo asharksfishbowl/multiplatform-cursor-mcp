@@ -9,6 +9,7 @@ function fake(screens: string[][] = []) {
     let state: OpenSession | null = null, expire: (() => void) | null = null
     const host: SessionHost = {
         now: () => new Date('2026-11-11T12:00:00Z'),
+        lockBusy: async () => null,
         holdLock: async label => { held.push(label); return 'tok123' },
         releaseLock: async t => { released.push(t); return `released ${t}` },
         appendQueue: async t => { queue.push(t) },
@@ -93,4 +94,11 @@ test('a lock that is not held starts no session and says so in the block', async
     await assert.rejects(s.begin('builder4', 'x', 5), /not held/)
     assert.match(f.queue[1], /^\/\/ DESKTOP: builder4 not started: /)
     assert.equal(s.current(), null)
+})
+
+test('a busy lock refuses the session at once: no block, no hold', async () => {
+    const f = fake(); f.host.lockBusy = async () => 'held by: ui-captures refpc-68a5615c, pid 30420, 2 waiting'
+    const s = new DesktopSessions(f.host)
+    await assert.rejects(s.begin('builder4', 'x', 5), /begin_session refused: Global\\NamecBuild is held by: ui-captures/)
+    assert.deepEqual([f.queue, f.held], [[], []])
 })
