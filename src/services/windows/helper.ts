@@ -9,7 +9,7 @@ export function helper(action: string, ...args: (string | number)[]): Promise<st
     return new Promise((resolve, reject) => {
         execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', Helper, action, ...args.map(String)],
             { encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
-            (error, stdout, stderr) => error ? reject(new Error(`windows-helper ${action}: ${(stderr || error.message).trim()}`)) : resolve(stdout.trim()))
+            (error, stdout, stderr) => error ? reject(new Error(`windows-helper ${action}: ${(stderr || error.message).trim().split(/\r?\n/)[0]}`)) : resolve(stdout.trim()))
     })
 }
 
