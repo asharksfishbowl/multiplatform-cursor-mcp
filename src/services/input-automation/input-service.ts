@@ -1,116 +1,52 @@
-import { keyboard, mouse, Point, Button, Key } from '@nut-tree-fork/nut-js'
+// Real mouse and keyboard through nut.js. Points are physical desktop pixels, as screenshots and OCR give them; nut.js works in this process's
+// scaled pixels, so each point is divided by the primary display's physical width over nut.js's (measured on refpc at 140 %, 2026-11-11).
+import { keyboard, mouse, screen, Point, Button, Key } from '@nut-tree-fork/nut-js'
+import { helper } from '../windows/helper.js'
+import { keyName } from './keys.js'
 
-export class InputAutomationService {
-    private static instance: InputAutomationService
-    private modifierKeys: Set<Key> = new Set()
+mouse.config.autoDelayMs = 40
+mouse.config.mouseSpeed = 4000
+keyboard.config.autoDelayMs = 20
 
-    private constructor() {
-        // Configure nut.js
-        keyboard.config.autoDelayMs = 30
-        mouse.config.autoDelayMs = 30
-        mouse.config.mouseSpeed = 1000
-    }
+let Scale = 0
+async function scale(): Promise<number> {
+    if (!Scale) { const [w] = (await helper('size')).split(' ').map(Number); Scale = w / await screen.width() }
+    return Scale
+}
+async function at(x: number, y: number): Promise<Point> {
+    const k = await scale()
+    return new Point(Math.round(x / k), Math.round(y / k))
+}
 
-    static getInstance(): InputAutomationService {
-        if (!InputAutomationService.instance) {
-            InputAutomationService.instance = new InputAutomationService()
-        }
-        return InputAutomationService.instance
-    }
+export async function move(x: number, y: number): Promise<void> {
+    await mouse.setPosition(await at(x, y))
+}
 
-    private getKeyCode(key: string): Key {
-        // Map common key names to nut.js key codes
-        const keyMap: { [key: string]: Key } = {
-            'control': Key.LeftControl,
-            'ctrl': Key.LeftControl,
-            'shift': Key.LeftShift,
-            'alt': Key.LeftAlt,
-            'command': Key.LeftCmd,
-            'cmd': Key.LeftCmd,
-            'enter': Key.Enter,
-            'return': Key.Return,
-            'tab': Key.Tab,
-            'escape': Key.Escape,
-            'esc': Key.Escape,
-            'backspace': Key.Backspace,
-            'delete': Key.Delete,
-            'space': Key.Space,
-            'up': Key.Up,
-            'down': Key.Down,
-            'left': Key.Left,
-            'right': Key.Right
-        }
+export async function click(x: number, y: number, button: 'left' | 'right' = 'left', double = false): Promise<void> {
+    await move(x, y)
+    const b = button === 'right' ? Button.RIGHT : Button.LEFT
+    if (double) await mouse.doubleClick(b); else await mouse.click(b)
+}
 
-        return keyMap[key.toLowerCase()] || key.toUpperCase() as unknown as Key
-    }
+/** amount > 0 scrolls down, < 0 up, in wheel notches. */
+export async function scroll(x: number, y: number, amount: number): Promise<void> {
+    await move(x, y)
+    if (amount > 0) await mouse.scrollDown(amount); else await mouse.scrollUp(-amount)
+}
 
-    async pressKey(key: string): Promise<void> {
-        const keyCode = this.getKeyCode(key)
-        await keyboard.pressKey(keyCode)
-    }
+export async function typeText(text: string): Promise<void> {
+    await keyboard.type(text)
+}
 
-    async releaseKey(key: string): Promise<void> {
-        const keyCode = this.getKeyCode(key)
-        await keyboard.releaseKey(keyCode)
-    }
+/** One chord ('ctrl+shift+s', 'enter'): every key held in order, then released in reverse. */
+export async function pressKeys(chord: string): Promise<void> {
+    const keys: Key[] = chord.split('+').map(k => Key[keyName(k) as keyof typeof Key])
+    await keyboard.pressKey(...keys)
+    await keyboard.releaseKey(...keys.reverse())
+}
 
-    async typeText(text: string): Promise<void> {
-        await keyboard.type(text)
-    }
-
-    async sendKeys(keys: string[]): Promise<void> {
-        for (const key of keys) {
-            const keyCode = this.getKeyCode(key)
-            
-            // Handle modifier keys specially
-            if ([Key.LeftControl, Key.LeftShift, Key.LeftAlt, Key.LeftCmd].includes(keyCode)) {
-                if (!this.modifierKeys.has(keyCode as Key)) {
-                    await keyboard.pressKey(keyCode)
-                    this.modifierKeys.add(keyCode as Key)
-                }
-                continue
-            }
-
-            // For regular keys, press and release
-            await keyboard.pressKey(keyCode as Key)
-            await keyboard.releaseKey(keyCode as Key)
-        }
-
-        // Release any held modifier keys
-        for (const modifierKey of this.modifierKeys) {
-            await keyboard.releaseKey(modifierKey)
-        }
-        this.modifierKeys.clear()
-    }
-
-    async moveMouse(x: number, y: number): Promise<void> {
-        await mouse.setPosition(new Point(x, y))
-    }
-
-    async mouseClick(button: 'left' | 'right' = 'left'): Promise<void> {
-        const buttonMap = {
-            'left': Button.LEFT,
-            'right': Button.RIGHT
-        }
-        await mouse.click(buttonMap[button])
-    }
-
-    async mouseDoubleClick(button: 'left' | 'right' = 'left'): Promise<void> {
-        const buttonMap = {
-            'left': Button.LEFT,
-            'right': Button.RIGHT
-        }
-        await mouse.doubleClick(buttonMap[button])
-    }
-
-    async mouseDrag(startX: number, startY: number, endX: number, endY: number): Promise<void> {
-        await mouse.setPosition(new Point(startX, startY))
-        await mouse.pressButton(Button.LEFT)
-        await mouse.setPosition(new Point(endX, endY))
-        await mouse.releaseButton(Button.LEFT)
-    }
-
-    async scrollWheel(amount: number): Promise<void> {
-        await mouse.scrollDown(amount)
-    }
+export async function pointer(): Promise<{ x: number, y: number, scale: number }> {
+    const k = await scale()
+    const p = await mouse.getPosition()
+    return { x: Math.round(p.x * k), y: Math.round(p.y * k), scale: k }
 }

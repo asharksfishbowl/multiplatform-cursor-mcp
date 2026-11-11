@@ -1,59 +1,36 @@
-/**
- * @fileoverview Main entry point for the MCP (Model Context Protocol) Cursor integration.
- * This file sets up a server that handles code execution requests in isolated workspaces.
- * It implements the MCP protocol for communication between Cursor IDE and the execution environment.
- */
+// The desktop control MCP server over Streamable HTTP. Run it in the Windows desktop session it is to see and drive (a scheduled task at sign-in,
+// /IT): input and screenshots from another session, as ssh's, reach nothing. Every request carries the bearer token from the config's tokenFile.
+import { createServer } from 'node:http'
+import { readFileSync } from 'node:fs'
+import { timingSafeEqual } from 'node:crypto'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { loadConfig } from './config.js'
+import { registerTools } from './tools/desktop-tools.js'
+import { DesktopSessions } from './session/desktop-session.js'
+import { windowsHost, leftOpen } from './session/windows-host.js'
 
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { CursorInstanceManagerImpl } from './managers/CursorInstanceManager.js'
-import { CursorToolHandler } from './handlers/CursorToolHandler.js'
-import { CursorTools } from './tools/cursor-tools.js'
+const config = loadConfig(process.argv)
+const token = Buffer.from(readFileSync(config.tokenFile, 'utf8').trim())
+if (token.length < 32) throw new Error(`${config.tokenFile}: the token is under 32 characters`)
+const sessions = new DesktopSessions(windowsHost(config))
+const recovered = await sessions.recover(await leftOpen(config))
+if (recovered) console.log(`desktop-mcp: ${recovered}`)
 
-async function main() {
-    const server = new Server(
-        {
-            name: 'cursor-mcp',
-            version: '1.0.0'
-        },
-        {
-            capabilities: {
-                tools: {
-                    listChanged: true
-                }
-            }
-        }
-    )
-
-    const cursorManager = new CursorInstanceManagerImpl()
-    const toolHandler = new CursorToolHandler(cursorManager)
-
-    server.setRequestHandler(ListToolsRequestSchema, () => {
-        return { tools: CursorTools }
-    })
-
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
-        const { name, _meta } = request.params
-        const params = request.params.arguments || {}
-        
-        switch (name) {
-            case 'open_cursor':
-                return toolHandler.handleOpenCursor(params)
-            case 'cursor_command':
-                return toolHandler.handleCursorCommand(params)
-            case 'open_cline_tab':
-                return toolHandler.handleOpenClineTab(params)
-            default:
-                throw new Error(`Unknown tool: ${name}`)
-        }
-    })
-
-    const transport = new StdioServerTransport()
-    await server.connect(transport)
+function authorized(header: string | undefined): boolean {
+    const given = Buffer.from(/^Bearer (.+)$/.exec(header ?? '')?.[1] ?? '')
+    return given.length === token.length && timingSafeEqual(given, token)
 }
 
-main().catch(error => {
-    console.error('Server error:', error)
-    process.exit(1)
+const http = createServer(async (req, res) => {
+    if (new URL(req.url ?? '/', 'http://x').pathname !== '/mcp') { res.writeHead(404).end(); return }
+    if (!authorized(req.headers.authorization)) { res.writeHead(401).end('no or wrong bearer token'); return }
+    // Stateless: a server and a transport each request. The desktop session lives in `sessions`, not in the MCP connection.
+    const server = new McpServer({ name: 'desktop-control', version: '2.0.0' })
+    registerTools(server, config, sessions)
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
+    res.on('close', () => { void transport.close(); void server.close() })
+    await server.connect(transport)
+    await transport.handleRequest(req, res)
 })
+http.listen(config.port, config.host, () => console.log(`desktop-mcp: listening on http://${config.host}:${config.port}/mcp`))

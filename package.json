@@ -1,37 +1,22 @@
 {
-  "name": "mcp-cursor",
-  "version": "1.0.0",
+  "name": "desktop-control-mcp",
+  "version": "2.0.0",
+  "description": "An MCP server over Streamable HTTP that sees and drives a Windows desktop session: screenshots, OCR, windows, mouse and keys, inside guarded sessions.",
   "type": "module",
-  "bin": {
-    "mcp-cursor": "./build/test/cursor-tool.js"
-  },
+  "main": "build/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "dev": "ts-node-dev --respawn src/index.ts",
-    "dev:inspect": "ts-node-dev --respawn src/index.ts",
-    "cursor": "node build/test/cursor-tool.js",
-    "test": "node --test build/test/*.test.js"
+    "test": "node --test \"build/test/*.test.js\""
   },
-  "files": [
-    "build"
-  ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
-    "@nut-tree-fork/nut-js": "^4.2.4",
-    "active-win": "latest",
-    "clipboardy": "latest",
-    "dotenv": "latest",
-    "fs-extra": "latest",
-    "uuid": "latest",
-    "winston": "latest",
-    "zod": "latest"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/fs-extra": "latest",
-    "@types/node": "latest",
-    "@types/uuid": "latest",
-    "ts-node-dev": "latest",
-    "typescript": "latest"
-  }
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT"
 }
