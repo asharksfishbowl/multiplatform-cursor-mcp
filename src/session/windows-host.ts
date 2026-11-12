@@ -34,7 +34,7 @@ export function windowsHost(c: Config): SessionHost {
         },
         async releaseLock(token) {
             const r = await lockScript(c, ['-Release', '-Token', token])
-            return r.out.split(/\r?\n/).pop() ?? ''
+            return { released: r.code === 0, text: r.out.split(/\r?\n/).pop() ?? '' }
         },
         appendQueue: text => appendFile(c.queue, `${text}\n`, 'utf8'),
         async shoot(folder, name) {

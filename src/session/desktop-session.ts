@@ -10,7 +10,8 @@ export interface SessionHost {
     /** Global\NamecBuild's holder and waiters, null when free with none waiting; holdLock resolves with the token once held. */
     lockBusy(): Promise<string | null>
     holdLock(label: string, minutes: number): Promise<string>
-    releaseLock(token: string): Promise<string>
+    /** released: the lock script took the release (exit 0); text: its last line, which says why when it did not. */
+    releaseLock(token: string): Promise<{ released: boolean, text: string }>
     appendQueue(text: string): Promise<void>
     /** Saves a screenshot named in the session's folder and reads its text. */
     shoot(folder: string, name: string): Promise<{ path: string, lines: TextLine[] }>
@@ -72,10 +73,13 @@ export class DesktopSessions {
         if (id !== s.id) throw new Error(`session ${id} is not the open one (${s.agent}'s)`)
         this.open = null
         this.cancelExpiry?.(); this.cancelExpiry = null
-        const released = await this.host.releaseLock(s.token)
+        const release = await this.host.releaseLock(s.token)
         const at = Utc(this.host.now())
-        await this.host.log(s.folder, `${at} ${s.agent} end: ${why}; ${released}`)
-        await this.host.appendQueue(`// DESKTOP: ${s.agent} released Global\\NamecBuild at ${at}: ${s.actions} action(s); ended by ${why}.`)
+        await this.host.log(s.folder, `${at} ${s.agent} end: ${why}; ${release.text}`)
+        // Only a release the lock script took is written as one: a refused or failed release leaves the hold until its minutes run out.
+        await this.host.appendQueue(release.released
+            ? `// DESKTOP: ${s.agent} released Global\\NamecBuild at ${at}: ${s.actions} action(s); ended by ${why}.`
+            : `// DESKTOP: ${s.agent} ended at ${at} but did NOT release Global\\NamecBuild: ${release.text}. The hold ends by itself at ${s.deadline}, or by namec-build-lock.ps1 -Release -Token ${s.token}. ${s.actions} action(s); ended by ${why}.`)
         await this.host.saveState(null)
         return `session ${s.id} ended (${why}); ${s.actions} action(s); pictures ${s.folder}`
     }

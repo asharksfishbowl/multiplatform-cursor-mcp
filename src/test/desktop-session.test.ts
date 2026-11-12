@@ -4,14 +4,14 @@ import { DesktopSessions, SessionHost, OpenSession, StopError } from '../session
 import type { TextLine } from '../services/windows/helper.js'
 
 // A fake machine: the queue lines, the lock's holds, and the text each next screenshot shows.
-function fake(screens: string[][] = []) {
+function fake(screens: string[][] = [], releaseFails = '') {
     const queue: string[] = [], held: string[] = [], released: string[] = [], shots: string[] = []
     let state: OpenSession | null = null, expire: (() => void) | null = null
     const host: SessionHost = {
         now: () => new Date('2026-11-11T12:00:00Z'),
         lockBusy: async () => null,
         holdLock: async label => { held.push(label); return 'tok123' },
-        releaseLock: async t => { released.push(t); return `released ${t}` },
+        releaseLock: async t => { released.push(t); return releaseFails ? { released: false, text: releaseFails } : { released: true, text: `released ${t}` } },
         appendQueue: async t => { queue.push(t) },
         shoot: async (folder, name) => { shots.push(name); const lines: TextLine[] = (screens.shift() ?? ['File Edit Window']).map((t, i) => ({ x: 10, y: 20 * i, right: 90, bottom: 20 * i + 15, text: t })); return { path: `${folder}/${name}.png`, lines } },
         foreground: async () => "UnrealEditor 'NAMEC'",
@@ -101,4 +101,13 @@ test('a busy lock refuses the session at once: no block, no hold', async () => {
     const s = new DesktopSessions(f.host)
     await assert.rejects(s.begin('builder4', 'x', 5), /begin_session refused: Global\\NamecBuild is held by: ui-captures/)
     assert.deepEqual([f.queue, f.held], [[], []])
+})
+
+test('a release the lock script refuses is written as NOT released, with the token and when the hold ends', async () => {
+    const f = fake([], "The argument 'namec-build-lock.ps1' to the -File parameter does not exist"); const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'a release that fails', 45)
+    await s.end(o.id)
+    assert.deepEqual(f.released, ['tok123'])
+    assert.doesNotMatch(f.queue[1], /released Global/)
+    assert.match(f.queue[1], /^\/\/ DESKTOP: builder4 ended at 2026-11-11T12:00:00Z but did NOT release Global\\NamecBuild: The argument .* does not exist\. The hold ends by itself at 2026-11-11T12:45:00Z, or by namec-build-lock\.ps1 -Release -Token tok123\. 0 action\(s\); ended by end_session\.$/)
 })
