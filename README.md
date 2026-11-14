@@ -13,14 +13,17 @@ It began as a Cursor IDE bridge; those tools did not build (robotjs was never a 
 | `read_text` | no | OCR of the desktop or one window: `x,y,right,bottom text` a line, in desktop pixels |
 | `find_window` | no | Visible titled windows, all or by process name or title text |
 | `pointer` | no | Where the pointer is |
-| `begin_session` / `end_session` | | Open and close the one session acting needs |
+| `begin_session` / `session_status` / `end_session` | | Open (or queue), wait for, and close the one session acting needs |
 | `focus_window`, `click`, `move`, `scroll`, `type_text`, `press_keys` | yes | Act, in desktop pixels |
 
 ## Rails, in the server
 
-- An acting tool outside the open session, or naming another session's id, is refused. One session at a time, at most 240 minutes; it ends itself when its minutes run out.
+- An acting tool outside the open session, or naming another session's id, is refused. One session at a time, at most 240 minutes from when it holds the lock; it ends itself when its minutes run out.
 - `begin_session <agent> <what> <minutes>` appends a `// DESKTOP:` block to the config's `queue` file (N.A.M.E.C's `.dex/wildcard-queue.groovy`) and holds `Global\NamecBuild`
   (`Tools/Build/namec-build-lock.ps1 -Hold`); `end_session` releases it and closes the block.
+- On a busy lock (1114-18) `begin_session` answers `queued` at once and its hold takes its turn in the lock's arrival order, outside the one-call-at-a-time queue the other tools share.
+  `session_status <id>` waits up to 45 s (under the 60 s an MCP SDK client gives a tool call) for the hold, and answering an open session claims it; a session that held but is not claimed
+  within 90 s gives the lock back. `end_session` on a queued session calls its hold off: its waiting holder is stopped, which the lock's queue skips; no other hold changes.
 - Before and after each action the whole screen is pictured and read; a line matching the checkout's `Tools/Desktop/stop-pattern.txt` (a price, buy, purchase, checkout, payment,
   licence to accept, sign-in, password, code) ends the session: `STOP: <window>: it shows "<text>" at (x, y)`. Nothing is pressed on such a screen.
 - `type_text` is refused into a field UI Automation reports as a password.

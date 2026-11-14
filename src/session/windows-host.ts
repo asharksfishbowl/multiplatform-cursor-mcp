@@ -1,5 +1,5 @@
-// The session's machine: the N.A.M.E.C checkout's lock script and queue file, and the screenshots, on the Windows desktop this server runs in.
-import { execFile } from 'node:child_process'
+// The session's machine: the N.A.M.E.C checkout's lock script and queue file, and the screenshots, on the Windows desktop this server runs in. A waiting hold is called off by stopping its holder (-Release refuses a hold not yet held; the lock's queue skips a waiter that died), one that has just taken the lock by -Release with the token its -Hold printed first.
+import { execFile, spawn } from 'node:child_process'
 import { appendFile, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -16,6 +16,12 @@ function lockScript(c: Config, args: string[]): Promise<{ code: number, out: str
     })
 }
 
+async function stopWaitingHolder(c: Config, label: string): Promise<string> {
+    const stop = `Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object { $_.CommandLine -like '*-HoldChild "${label}"*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; "stopped its waiting holder, pid $($_.ProcessId)" }`
+    const r = await new Promise<string>(resolve => execFile('powershell', ['-NoProfile', '-Command', stop], { encoding: 'utf8', windowsHide: true }, (_e, stdout, stderr) => resolve(`${stdout}${stderr}`.trim())))
+    return r || 'no waiting holder was left'
+}
+
 export function windowsHost(c: Config): SessionHost {
     const p = paths(c)
     return {
@@ -26,12 +32,25 @@ export function windowsHost(c: Config): SessionHost {
             if (r.code !== 0 || !status) throw new Error(`namec-build-lock -Status gave no status (exit ${r.code}): ${r.out}`)
             return status === 'free, 0 waiting' ? null : status
         },
-        async holdLock(label, minutes) {
-            const r = await lockScript(c, ['-Hold', label, '-EngineRoot', c.engineRoot, '-Minutes', String(minutes)])
-            const token = /-Release -Token (\w+)/.exec(r.out)?.[1]
-            if (r.code !== 0 || !token) throw new Error(`Global\\NamecBuild not held (exit ${r.code}): ${r.out.split(/\r?\n/).slice(-3).join(' | ')}`)
-            return token
+        startHold(label, minutes) {
+            const watcher = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', p.lock, '-Hold', label, '-EngineRoot', c.engineRoot, '-Minutes', String(minutes)], { windowsHide: true })
+            let out = ''
+            watcher.stdout.on('data', d => { out += d })
+            watcher.stderr.on('data', d => { out += d })
+            const held = new Promise<string>((resolve, reject) => watcher.on('close', code => {
+                const token = /-Release -Token (\w+)/.exec(out)?.[1]
+                if (code === 0 && token) resolve(token)
+                else reject(new Error(`Global\\NamecBuild not held (exit ${code}): ${out.trim().split(/\r?\n/).slice(-3).join(' | ')}`))
+            }))
+            async function callOff() {
+                const token = / token (\w+)\s*$/m.exec(out)?.[1]
+                const released = token ? await lockScript(c, ['-Release', '-Token', token]) : null
+                watcher.kill()
+                return released?.code === 0 ? `released at once, as it had just taken the lock (token ${token})` : stopWaitingHolder(c, label)
+            }
+            return { held, callOff }
         },
+        callOffLeft: label => stopWaitingHolder(c, label),
         async releaseLock(token) {
             const r = await lockScript(c, ['-Release', '-Token', token])
             return { released: r.code === 0, text: r.out.split(/\r?\n/).pop() ?? '' }
