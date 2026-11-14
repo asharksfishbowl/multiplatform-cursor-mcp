@@ -17,7 +17,7 @@ function lockScript(c: Config, args: string[]): Promise<{ code: number, out: str
 }
 
 async function stopWaitingHolder(token: string): Promise<{ done: boolean, text: string }> {
-    const stop = `try { $p = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Stop | Where-Object { $_.CommandLine -like '*-HoldChild *-Token ${token} -EngineRoot*' }); `
+    const stop = `try { $p = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Stop | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*-HoldChild *-Token ${token} -EngineRoot*' }); `
         + `if (-not $p) { 'no holder of that token was left' } else { $p | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; "stopped its waiting holder, pid $($_.ProcessId)" } } } catch { "FAILED: $($_.Exception.Message)"; exit 1 }`
     return new Promise(resolve => execFile('powershell', ['-NoProfile', '-Command', stop], { encoding: 'utf8', windowsHide: true },
         (error, stdout, stderr) => resolve({ done: !error, text: `${stdout}${stderr}`.trim() || `powershell exited ${error?.code ?? 0} saying nothing` })))
