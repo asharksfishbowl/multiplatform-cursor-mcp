@@ -1,5 +1,5 @@
-// The session's machine: the N.A.M.E.C checkout's lock script and queue file, and the screenshots, on the Windows desktop this server runs in.
-import { execFile } from 'node:child_process'
+// The session's machine: the N.A.M.E.C checkout's lock script and queue file, and the screenshots, on the Windows desktop this server runs in. A hold is called off by -Release with the token its -Hold prints first, else by stopping its waiting holder (`-HoldChild … -Token <t>` on its command line; -Release refuses a hold not yet held, and the lock's queue skips a waiter that died): namec-build-lock.ps1's own forms, which a change there must keep.
+import { execFile, spawn } from 'node:child_process'
 import { appendFile, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -16,6 +16,13 @@ function lockScript(c: Config, args: string[]): Promise<{ code: number, out: str
     })
 }
 
+async function stopWaitingHolder(token: string): Promise<{ done: boolean, text: string }> {
+    const stop = `try { $p = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Stop | Where-Object { $_.CommandLine -like '*-HoldChild *-Token ${token} -EngineRoot*' }); `
+        + `if (-not $p) { 'no holder of that token was left' } else { $p | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; "stopped its waiting holder, pid $($_.ProcessId)" } } } catch { "FAILED: $($_.Exception.Message)"; exit 1 }`
+    return new Promise(resolve => execFile('powershell', ['-NoProfile', '-Command', stop], { encoding: 'utf8', windowsHide: true },
+        (error, stdout, stderr) => resolve({ done: !error, text: `${stdout}${stderr}`.trim() || `powershell exited ${error?.code ?? 0} saying nothing` })))
+}
+
 export function windowsHost(c: Config): SessionHost {
     const p = paths(c)
     return {
@@ -26,11 +33,24 @@ export function windowsHost(c: Config): SessionHost {
             if (r.code !== 0 || !status) throw new Error(`namec-build-lock -Status gave no status (exit ${r.code}): ${r.out}`)
             return status === 'free, 0 waiting' ? null : status
         },
-        async holdLock(label, minutes) {
-            const r = await lockScript(c, ['-Hold', label, '-EngineRoot', c.engineRoot, '-Minutes', String(minutes)])
-            const token = /-Release -Token (\w+)/.exec(r.out)?.[1]
-            if (r.code !== 0 || !token) throw new Error(`Global\\NamecBuild not held (exit ${r.code}): ${r.out.split(/\r?\n/).slice(-3).join(' | ')}`)
-            return token
+        startHold(label, minutes) {
+            const watcher = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', p.lock, '-Hold', label, '-EngineRoot', c.engineRoot, '-Minutes', String(minutes)], { windowsHide: true })
+            let out = ''
+            let named = (_token: string) => {}
+            const token = new Promise<string>((resolve, reject) => { named = resolve; watcher.on('close', () => reject(new Error('the -Hold ended before it named its token'))) })
+            const read = (d: Buffer) => { out += d; const t = / token (\w+)\s*$/m.exec(out)?.[1]; if (t) named(t) }
+            watcher.stdout.on('data', read)
+            watcher.stderr.on('data', read)
+            const held = new Promise<string>((resolve, reject) => watcher.on('close', code => {
+                const token = /-Release -Token (\w+)/.exec(out)?.[1]
+                if (code === 0 && token) resolve(token)
+                else reject(new Error(`Global\\NamecBuild not held (exit ${code}): ${out.trim().split(/\r?\n/).slice(-3).join(' | ')}`))
+            }))
+            return { token, held }
+        },
+        async callOff(token) {
+            const released = await lockScript(c, ['-Release', '-Token', token])
+            return released.code === 0 ? { done: true, text: `released at once, as it had just taken the lock (token ${token})` } : stopWaitingHolder(token)
         },
         async releaseLock(token) {
             const r = await lockScript(c, ['-Release', '-Token', token])

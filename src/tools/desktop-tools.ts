@@ -1,5 +1,5 @@
 // The tools. Looking (screenshot, read_text, find_window, pointer) needs no session; acting (focus_window, click, move, scroll, type_text, press_keys)
-// runs only inside the open session it names. Calls run one at a time: two agents' input interleaved on one desktop would land nowhere either meant.
+// runs only inside the open session it names. Calls run one at a time (two agents' input interleaved would land nowhere either meant), but session_status, which only waits.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import path from 'node:path'
@@ -8,7 +8,7 @@ import { Config } from '../config.js'
 import { screenshot, readText, viewImage } from '../services/windows/screen.js'
 import { findWindows, focusWindow, focusedIsPassword } from '../services/window-manager/windows-manager.js'
 import * as input from '../services/input-automation/input-service.js'
-import { DesktopSessions } from '../session/desktop-session.js'
+import { ClaimMs, DesktopSessions, StatusWaitMs } from '../session/desktop-session.js'
 
 type Content = { type: 'text', text: string } | { type: 'image', data: string, mimeType: string }
 const text = (t: string): Content => ({ type: 'text', text: t })
@@ -22,9 +22,9 @@ function oneAtATime<T>(f: () => Promise<T>): Promise<T> {
 let Looks = 0
 
 export function registerTools(server: McpServer, c: Config, sessions: DesktopSessions): void {
-    const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, f: (a: z.objectOutputType<S, z.ZodTypeAny>) => Promise<Content[]>) =>
+    const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, f: (a: z.objectOutputType<S, z.ZodTypeAny>) => Promise<Content[]>, queued = true) =>
         server.registerTool(name, { description, inputSchema: shape }, (async (a: any) => {
-            try { return { content: await oneAtATime(() => f(a)) } }
+            try { return { content: await (queued ? oneAtATime(() => f(a)) : f(a)) } }
             catch (e: any) { return { isError: true, content: [text(String(e?.message ?? e))] } }
         }) as any)
 
@@ -32,7 +32,7 @@ export function registerTools(server: McpServer, c: Config, sessions: DesktopSes
     async function lookPath(): Promise<string> {
         const s = sessions.current()
         const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')
-        if (s) {
+        if (s?.phase === 'held') {
             const name = `${String(s.actions).padStart(2, '0')}-look-${++Looks}`
             await sessions.check(`${name}-check`)
             return path.join(s.folder, `${name}.png`)
@@ -62,10 +62,18 @@ export function registerTools(server: McpServer, c: Config, sessions: DesktopSes
         { which: z.string().optional() }, async a => [text(await findWindows(a.which) || '(no window)')])
     tool('pointer', 'Where the pointer is, in desktop pixels.', {}, async () => { const p = await input.pointer(); return [text(`pointer at ${p.x},${p.y}; nut.js scale ${p.scale.toFixed(3)}`)] })
 
-    tool('begin_session', "Opens the desktop session every acting tool needs: one at a time, at most `minutes`. It writes a // DESKTOP: block in N.A.M.E.C's .dex/wildcard-queue.groovy and holds Global\\NamecBuild (it waits for the lock). Never for a password, token or login: the user signs in by hand. A screen showing a price, purchase, licence to accept, sign-in, password or code ends the session (STOP).",
+    tool('begin_session', `Opens the desktop session every acting tool needs: one at a time, at most \`minutes\` from when it holds Global\\NamecBuild. It writes a // DESKTOP: block in N.A.M.E.C's .dex/wildcard-queue.groovy. With the lock free it answers open; with the lock busy it answers queued and takes its turn in arrival order: call session_status to wait for it, and claim it within ${ClaimMs / 1000} s of it holding or it gives the lock back. Never for a password, token or login: the user signs in by hand. A screen showing a price, purchase, licence to accept, sign-in, password or code ends the session (STOP).`,
         { agent: z.string().describe('Your agent name, e.g. builder4'), what: z.string().describe('What the session is for, one sentence'), minutes: z.number().int().min(1).max(240) },
-        async a => { const s = await sessions.begin(a.agent, a.what, a.minutes); return [text(`session ${s.id} open for ${s.agent} until ${s.deadline}; pictures ${s.folder}`)] })
-    tool('end_session', 'Ends the session: frees Global\\NamecBuild and closes its DESKTOP block.', { session }, async a => [text(await sessions.end(a.session))])
+        async a => {
+            const s = await sessions.begin(a.agent, a.what, a.minutes)
+            return [text(s.phase === 'held' ? `session ${s.id} open for ${s.agent} until ${s.deadline}; pictures ${s.folder}`
+                : `session ${s.id} queued for ${s.agent}: Global\\NamecBuild is busy (see its DESKTOP block); call session_status ${s.id} to wait for its turn`)]
+        })
+    tool('session_status', `Whether a session is queued or open. A queued one is waited on, up to ${StatusWaitMs / 1000} s, until it holds Global\\NamecBuild and has looked; call again while it says queued. Answering an open one claims it.`,
+        { session },
+        async a => [text(await sessions.status(a.session))],
+        false)
+    tool('end_session', 'Ends the session: frees Global\\NamecBuild, or calls off its turn while it is queued, and closes its DESKTOP block.', { session }, async a => [text(await sessions.end(a.session))])
 
     const act = (a: { session: string }, name: string, detail: string, f: () => Promise<string>) => sessions.act(a.session, name, detail, f).then(r => [text(r)])
     tool('focus_window', 'Brings a window forward (a process name or text in its title); a maximized window stays maximized.', { session, which: z.string() },
