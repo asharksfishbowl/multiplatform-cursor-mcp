@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ClaimMs, DesktopSessions, SessionHost, OpenSession, StopError, StatusWaitMs } from '../session/desktop-session.js'
+import { BeginWaitMs, ClaimMs, DesktopSessions, SessionHost, OpenSession, StopError, StatusWaitMs } from '../session/desktop-session.js'
 import type { TextLine } from '../services/windows/helper.js'
 
 // A fake machine: the queue lines, the lock's holds (each held at once, or when the test says), its timers by length, and the text each next screenshot shows.
@@ -17,9 +17,9 @@ function fake(screens: string[][] = [], releaseFails = '') {
             held.push(label)
             const turn = new Promise<string>((resolve, reject) => { take = resolve; refuse = reject })
             if (holdsAtOnce) take!('tok123')
-            return { held: turn, callOff: async () => { calledOff.push(label); return 'stopped its waiting holder, pid 4242' } }
+            return { token: Promise.resolve(holdsAtOnce ? 'tok123' : 'tok456'), held: turn }
         },
-        callOffLeft: async label => { calledOff.push(`left ${label}`); return 'stopped its waiting holder, pid 77' },
+        callOff: async token => { calledOff.push(token); return { done: true, text: 'stopped its waiting holder, pid 4242' } },
         releaseLock: async t => { released.push(t); return releaseFails ? { released: false, text: releaseFails } : { released: true, text: `released ${t}` } },
         appendQueue: async t => { queue.push(t) },
         shoot: async (folder, name) => { shots.push(name); const lines: TextLine[] = (screens.shift() ?? ['File Edit Window']).map((t, i) => ({ x: 10, y: 20 * i, right: 90, bottom: 20 * i + 15, text: t })); return { path: `${folder}/${name}.png`, lines } },
@@ -33,7 +33,8 @@ function fake(screens: string[][] = [], releaseFails = '') {
     const settle = () => new Promise(done => setImmediate(done))
     return {
         host, queue, held, released, shots, calledOff, state: () => state,
-        expire: (ms = 60_000) => [...timers].find(([length]) => length >= ms && length !== ClaimMs && length !== StatusWaitMs)?.[1](),
+        expire: (ms = 60_000) => [...timers].find(([length]) => length >= ms && ![ClaimMs, StatusWaitMs, BeginWaitMs].includes(length))?.[1](),
+        timers: () => [...timers.keys()],
         fire: (ms: number) => timers.get(ms)?.(), timer: (ms: number) => timers.has(ms),
         queueBehind: (busy: string) => { holdsAtOnce = false; host.lockBusy = async () => busy },
         holdNow: async () => { take?.('tok456'); await settle(); await settle() },
@@ -108,17 +109,26 @@ test('a session left open by a stopped server is closed at start', async () => {
 
 test('a session the stopped server left queued has its waiting hold called off at start', async () => {
     const f = fake(); const s = new DesktopSessions(f.host)
-    const left: OpenSession = { id: 'q1', agent: 'artist', what: 'x', started: '', deadline: '', token: '', folder: '/f', actions: 0, phase: 'queued', minutes: 5 }
+    const left: OpenSession = { id: 'q1', agent: 'artist', what: 'x', started: '', deadline: '', token: 'old7', folder: '/f', actions: 0, phase: 'queued', minutes: 5 }
     assert.match((await s.recover(left))!, /called off \(the server restarting\)/)
-    assert.deepEqual([f.calledOff, f.released], [['left desktop artist'], []])
-    assert.match(f.queue[0], /^\/\/ DESKTOP: artist called off at .* before it held Global\\NamecBuild: stopped its waiting holder, pid 77; ended by the server restarting\.$/)
+    assert.deepEqual([f.calledOff, f.released], [['old7'], []])
+    assert.match(f.queue[0], /^\/\/ DESKTOP: artist called off at .* before it held Global\\NamecBuild: stopped its waiting holder, pid 4242; ended by the server restarting\.$/)
+})
+
+test('a hold that cannot be called off is written as NOT called off, with its token', async () => {
+    const f = fake(); f.queueBehind('held by: a run, 1 waiting')
+    f.host.callOff = async () => ({ done: false, text: 'FAILED: Access is denied' })
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    await s.end(o.id)
+    assert.match(f.queue.at(-1)!, /^\/\/ DESKTOP: builder4 ended at .* but its hold was NOT called off: FAILED: Access is denied\. .* -Release -Token tok456; ended by end_session\.$/)
 })
 
 test('a lock that is not held starts no session and says so in the block', async () => {
-    const f = fake(); f.host.startHold = () => ({ held: Promise.reject(new Error('Global\\NamecBuild not held (exit 1)')), callOff: async () => 'x' })
+    const f = fake(); f.host.startHold = () => ({ token: Promise.resolve('t1'), held: Promise.reject(new Error('Global\\NamecBuild not held (exit 1)')) })
     const s = new DesktopSessions(f.host)
     await assert.rejects(s.begin('builder4', 'x', 5), /not held/)
-    assert.match(f.queue[1], /^\/\/ DESKTOP: builder4 not started: /)
+    assert.match(f.queue[0], /^\/\/ DESKTOP: builder4 not started: /)
     assert.equal(s.current(), null)
 })
 
@@ -170,7 +180,7 @@ test('end_session on a queued session calls its hold off, and a turn that comes 
     const s = new DesktopSessions(f.host)
     const o = await s.begin('builder4', 'x', 5)
     assert.match(await s.end(o.id), /called off \(end_session\) before it held the lock/)
-    assert.deepEqual([f.calledOff, f.released], [['desktop builder4'], []])
+    assert.deepEqual([f.calledOff, f.released], [['tok456'], []])
     assert.match(f.queue.at(-1)!, /^\/\/ DESKTOP: builder4 called off at .* before it held Global\\NamecBuild: stopped its waiting holder, pid 4242; ended by end_session\.$/)
     await f.holdNow()
     assert.deepEqual([s.current(), f.queue.length], [null, 2])
@@ -184,6 +194,70 @@ test('a queued hold that fails ends the session and says so in the block', async
     assert.equal(s.current(), null)
     assert.match(f.queue.at(-1)!, /^\/\/ DESKTOP: builder4 not started: .*mid-update$/)
     assert.match(await s.status(o.id).catch(e => e.message), /is not open or queued/)
+})
+
+test('claiming by session_status holds: the claim window is gone however slow the writes after holding are', async () => {
+    const f = fake(); f.queueBehind('held by: a run, 0 waiting')
+    const writes: (() => void)[] = []
+    const write = () => writes.splice(0).forEach(done => done())
+    f.host.appendQueue = t => { f.queue.push(t); return f.queue.length > 1 ? new Promise<void>(done => { writes.push(done) }) : Promise.resolve() }
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    const waiting = s.status(o.id)
+    await f.settle()
+    await f.holdNow()
+    for (let i = 0; i < 6; i++) { write(); await f.settle() }
+    assert.match(await waiting, /open for builder4/)
+    assert.deepEqual([f.timer(ClaimMs), s.current()?.id], [false, o.id])
+})
+
+test('an action claims a held session', async () => {
+    const f = fake(); f.queueBehind('held by: a run, 0 waiting')
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    await f.holdNow()
+    await s.act(o.id, 'click', '1,1', async () => 'clicked')
+    assert.equal(f.timer(ClaimMs), false)
+})
+
+test('end_session while the hold arrives leaves no timer behind', async () => {
+    const f = fake(); f.queueBehind('held by: a run, 0 waiting')
+    const writes: (() => void)[] = []
+    const write = () => writes.splice(0).forEach(done => done())
+    f.host.appendQueue = t => { f.queue.push(t); return f.queue.length > 1 ? new Promise<void>(done => { writes.push(done) }) : Promise.resolve() }
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    await f.holdNow()
+    const ended = s.end(o.id)
+    for (let i = 0; i < 6; i++) { write(); await f.settle() }
+    await ended
+    await f.settle(); await f.settle()
+    assert.deepEqual([f.timers(), f.state(), f.released], [[], null, ['tok456']])
+})
+
+test('a lock taken between the look and the hold answers queued after the begin wait, with the claim window', async () => {
+    const f = fake(); f.queueBehind('held by: ci run 99, 0 waiting')
+    f.host.lockBusy = (() => { let looks = 0; return async () => (looks++ ? 'held by: ci run 99, 0 waiting' : null) })()
+    const s = new DesktopSessions(f.host)
+    const begun = s.begin('builder4', 'x', 5)
+    while (!f.timer(BeginWaitMs)) await f.settle()
+    f.fire(BeginWaitMs)
+    const o = await begun
+    assert.equal(o.phase, 'queued')
+    assert.match(f.queue[0], /queued at .* Global\\NamecBuild is held by: ci run 99/)
+    await f.holdNow()
+    assert.equal(f.timer(ClaimMs), true)
+})
+
+test('session_status after a STOP on the first look says it was stopped', async () => {
+    const f = fake([['Buy now $ 19.99']]); f.queueBehind('held by: a run, 0 waiting')
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    const waiting = s.status(o.id)
+    await f.settle()
+    await f.holdNow()
+    await f.settle()
+    assert.match(await waiting, /ended: STOP: /)
 })
 
 test('a release the lock script refuses is written as NOT released, with the token and when the hold ends', async () => {

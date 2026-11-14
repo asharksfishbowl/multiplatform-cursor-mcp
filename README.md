@@ -21,7 +21,7 @@ It began as a Cursor IDE bridge; those tools did not build (robotjs was never a 
 - An acting tool outside the open session, or naming another session's id, is refused. One session at a time, at most 240 minutes from when it holds the lock; it ends itself when its minutes run out.
 - `begin_session <agent> <what> <minutes>` appends a `// DESKTOP:` block to the config's `queue` file (N.A.M.E.C's `.dex/wildcard-queue.groovy`) and holds `Global\NamecBuild`
   (`Tools/Build/namec-build-lock.ps1 -Hold`); `end_session` releases it and closes the block.
-- On a busy lock (1114-18) `begin_session` answers `queued` at once and its hold takes its turn in the lock's arrival order, outside the one-call-at-a-time queue the other tools share.
+- On a busy lock (1114-18), or one taken within 20 s of looking free, `begin_session` answers `queued` and its hold takes its turn in the lock's arrival order, outside the one-call-at-a-time queue the other tools share.
   `session_status <id>` waits up to 45 s (under the 60 s an MCP SDK client gives a tool call) for the hold, and answering an open session claims it; a session that held but is not claimed
   within 90 s gives the lock back. `end_session` on a queued session calls its hold off: its waiting holder is stopped, which the lock's queue skips; no other hold changes.
 - Before and after each action the whole screen is pictured and read; a line matching the checkout's `Tools/Desktop/stop-pattern.txt` (a price, buy, purchase, checkout, payment,
