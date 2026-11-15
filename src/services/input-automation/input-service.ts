@@ -2,7 +2,7 @@
 // scaled pixels, so each point is divided by the primary display's physical width over nut.js's (measured on refpc at 140 %, 2026-11-11).
 import { keyboard, mouse, screen, Point, Button, Key } from '@nut-tree-fork/nut-js'
 import { helper } from '../windows/helper.js'
-import { keyName } from './keys.js'
+import { keyName, pressChord } from './keys.js'
 
 mouse.config.autoDelayMs = 40
 mouse.config.mouseSpeed = 4000
@@ -38,11 +38,14 @@ export async function typeText(text: string): Promise<void> {
     await keyboard.type(text)
 }
 
-/** One chord ('ctrl+shift+s', 'enter'): every key held in order, then released in reverse. */
+/** One chord ('ctrl+shift+s', 'enter'): every key held in order, then every key released. */
 export async function pressKeys(chord: string): Promise<void> {
     const keys: Key[] = chord.split('+').map(k => Key[keyName(k) as keyof typeof Key])
-    await keyboard.pressKey(...keys)
-    await keyboard.releaseKey(...keys.reverse())
+    await pressChord(keys, keyboard)
+}
+
+export async function heldKeys(windowsKeyNames: string[]): Promise<string> {
+    return helper('keys', windowsKeyNames.join(','))
 }
 
 export async function pointer(): Promise<{ x: number, y: number, scale: number }> {

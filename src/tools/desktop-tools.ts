@@ -8,6 +8,7 @@ import { Config } from '../config.js'
 import { screenshot, readText, viewImage } from '../services/windows/screen.js'
 import { findWindows, focusWindow, focusedIsPassword } from '../services/window-manager/windows-manager.js'
 import * as input from '../services/input-automation/input-service.js'
+import { watchedKeys } from '../services/input-automation/keys.js'
 import { ClaimMs, DesktopSessions, StatusWaitMs } from '../session/desktop-session.js'
 
 type Content = { type: 'text', text: string } | { type: 'image', data: string, mimeType: string }
@@ -84,13 +85,18 @@ export function registerTools(server: McpServer, c: Config, sessions: DesktopSes
         a => act(a, 'move', `${a.x},${a.y}`, async () => { await input.move(a.x, a.y); return `pointer at ${a.x},${a.y}` }))
     tool('scroll', 'Scrolls at a desktop pixel: amount > 0 down, < 0 up, in wheel notches.', { session, x, y, amount: z.number().int() },
         a => act(a, 'scroll', `${a.x},${a.y} ${a.amount}`, async () => { await input.scroll(a.x, a.y, a.amount); return `scrolled ${a.amount} at ${a.x},${a.y}` }))
+    const held = async (names: string[], f: () => Promise<string>) => {
+        const before = await input.heldKeys(names)
+        const result = await f()
+        return `${result}; held before: ${before}; after: ${await input.heldKeys(names)}`
+    }
     tool('type_text', 'Types text into the focused control. Refused into a password field.', { session, text: z.string() },
-        a => act(a, 'type_text', `${a.text.length} characters`, async () => {
+        a => act(a, 'type_text', `${a.text.length} characters`, () => held(watchedKeys(), async () => {
             const p = await focusedIsPassword()
             if (p.password) throw new Error(`type_text refused: the focused control is a password field (${p.detail})`)
             await input.typeText(a.text)
             return `typed ${a.text.length} characters`
-        }))
-    tool('press_keys', "Presses one chord: keys joined by '+', held in order and released in reverse ('enter', 'ctrl+s', 'alt+f4', 'shift+tab').", { session, keys: z.string() },
-        a => act(a, 'press_keys', a.keys, async () => { await input.pressKeys(a.keys); return `pressed ${a.keys}` }))
+        })))
+    tool('press_keys', "Presses one chord: keys joined by '+', held in order, then all released ('enter', 'ctrl+s', 'alt+f4', 'shift+tab').", { session, keys: z.string() },
+        a => act(a, 'press_keys', a.keys, () => held(watchedKeys(a.keys), async () => { await input.pressKeys(a.keys); return `pressed ${a.keys}` })))
 }
