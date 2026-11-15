@@ -12,6 +12,7 @@ public static class Dk {
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -119,6 +120,12 @@ switch ($Action) {
     if (-not $F) { 'no (no focused element)'; break }
     $C = $F.Current
     "$(if ($C.IsPassword) { 'yes' } else { 'no' }) '$($C.Name)' $($C.ControlType.ProgrammaticName)"
+  }
+  # keys: which of the named keys (System.Windows.Forms.Keys names, comma-separated) Windows holds down now, 'LWin,P', else 'none'.
+  'keys' {
+    Add-Type -AssemblyName System.Windows.Forms
+    $Held = foreach ($N in $Arg -split ',') { if ([Dk]::GetAsyncKeyState([int][System.Windows.Forms.Keys]$N) -band 0x8000) { $N } }
+    if ($Held) { $Held -join ',' } else { 'none' }
   }
   default { throw "no action $Action" }
 }
