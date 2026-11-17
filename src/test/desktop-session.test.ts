@@ -5,7 +5,7 @@ import type { TextLine } from '../services/windows/helper.js'
 
 // A fake machine: the queue lines, the lock's holds (each held at once, or when the test says), its timers by length, and the text each next screenshot shows.
 function fake(screens: string[][] = [], releaseFails = '') {
-    const queue: string[] = [], held: string[] = [], released: string[] = [], shots: string[] = [], calledOff: string[] = []
+    const queue: string[] = [], held: string[] = [], released: string[] = [], shots: string[] = [], calledOff: string[] = [], closed: string[] = []
     let state: OpenSession | null = null
     const timers = new Map<number, () => void>()
     let take: ((token: string) => void) | null = null, refuse: ((e: Error) => void) | null = null
@@ -25,6 +25,9 @@ function fake(screens: string[][] = [], releaseFails = '') {
         shoot: async (folder, name) => { shots.push(name); const lines: TextLine[] = (screens.shift() ?? ['File Edit Window']).map((t, i) => ({ x: 10, y: 20 * i, right: 90, bottom: 20 * i + 15, text: t })); return { path: `${folder}/${name}.png`, lines } },
         foreground: async () => "UnrealEditor 'NAMEC'",
         stopPattern: () => /\$\s?\d|\bBuy\b|Password|Sign in/i,
+        closeOnStop: () => [{ process: 'Docker Desktop', title: 'Docker Desktop' }],
+        windowsOf: async () => [],
+        closeWindow: async h => { closed.push(h); return { closed: true, text: `closed ${h} by WM_CLOSE` } },
         folderFor: async (_d, agent) => `/shots/${agent}`,
         log: async () => {},
         saveState: async s => { state = s },
@@ -32,7 +35,7 @@ function fake(screens: string[][] = [], releaseFails = '') {
     }
     const settle = () => new Promise(done => setImmediate(done))
     return {
-        host, queue, held, released, shots, calledOff, state: () => state,
+        host, queue, held, released, shots, calledOff, closed, state: () => state,
         expire: (ms = 60_000) => [...timers].find(([length]) => length >= ms && ![ClaimMs, StatusWaitMs, BeginWaitMs].includes(length))?.[1](),
         timers: () => [...timers.keys()],
         fire: (ms: number) => timers.get(ms)?.(), timer: (ms: number) => timers.has(ms),
@@ -267,4 +270,78 @@ test('a release the lock script refuses is written as NOT released, with the tok
     assert.deepEqual(f.released, ['tok123'])
     assert.doesNotMatch(f.queue[1], /released Global/)
     assert.match(f.queue[1], /^\/\/ DESKTOP: builder4 ended at 2026-11-11T12:00:00Z but did NOT release Global\\NamecBuild: The argument .* does not exist\. The hold ends by itself at 2026-11-11T12:45:00Z, or by namec-build-lock\.ps1 -Release -Token tok123\. 0 action\(s\); ended by end_session\.$/)
+})
+
+// Docker Desktop's window as refpc showed it on 2026-11-16: its header's Sign in button is the hit (lines lie at x 10-90, y 20i to 20i+15).
+const docker = (b = 100) => [{ handle: '198658', l: 0, t: 0, r: 100, b, title: 'Containers - Docker Desktop' }]
+
+test('a sign-in inside the close-on-stop window is closed by WM_CLOSE and the session goes on', async () => {
+    const f = fake([['Containers', 'Sign in'], ['File Edit Window']]); f.host.windowsOf = async r => (assert.equal(r.process, 'Docker Desktop'), docker())
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    assert.deepEqual([f.closed, f.shots, s.current()?.id], [['198658'], ['00-begin', '00-begin-closed'], o.id])
+    assert.equal(await s.act(o.id, 'click', '5,5', async () => 'clicked 5,5'), 'clicked 5,5')
+    assert.deepEqual([o.actions, f.closed.length], [1, 1])
+    await s.end(o.id)
+})
+
+test('a sign-in in a window not listed still stops, and nothing is closed', async () => {
+    const f = fake([['Sign in to continue']]); const s = new DesktopSessions(f.host)
+    await assert.rejects(s.begin('builder4', 'x', 5), StopError)
+    assert.deepEqual([f.closed, s.current()], [[], null])
+    assert.match(f.queue.at(-1)!, /ended by STOP: .*Sign in to continue/)
+})
+
+test('a Docker sign-in with a Buy outside its window stops, and the window is left open', async () => {
+    const f = fake([['Sign in', 'Buy now']]); f.host.windowsOf = async () => docker(18)
+    const s = new DesktopSessions(f.host)
+    await assert.rejects(s.begin('builder4', 'x', 5), StopError)
+    assert.deepEqual([f.closed, s.current()], [[], null])
+    assert.match(f.queue.at(-1)!, /ended by STOP: .*it shows "Sign in"/)
+})
+
+test('a close-on-stop window that will not close stops, saying so', async () => {
+    const f = fake([['Sign in']]); f.host.windowsOf = async () => docker()
+    f.host.closeWindow = async h => { f.closed.push(h); return { closed: false, text: `not closed: ${h} still visible 5 s after WM_CLOSE` } }
+    const s = new DesktopSessions(f.host)
+    await assert.rejects(s.begin('builder4', 'x', 5), StopError)
+    assert.deepEqual([f.closed, f.shots, s.current()], [['198658'], ['00-begin'], null])
+    assert.match(f.queue.at(-1)!, /STOP: .*"Sign in".*; Docker Desktop 'Containers - Docker Desktop' would not close: not closed: 198658 still visible/)
+})
+
+test('a match still on screen after the close stops, and the window is closed once', async () => {
+    const f = fake([['Fab'], ['Sign in'], ['Sign in']]); f.host.windowsOf = async () => docker()
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    let pressed = false
+    await assert.rejects(s.act(o.id, 'click', '1,1', async () => { pressed = true; return 'x' }), /STOP: .*\(\/shots\/builder4\/01-click-before-closed\.png\); after closing Docker Desktop/)
+    assert.deepEqual([pressed, f.closed], [false, ['198658']])
+})
+
+test('a check made while another closes the window waits for it, and sees the screen after the close', async () => {
+    const f = fake(); let shown = false
+    f.host.windowsOf = async () => shown ? docker() : []
+    f.host.closeWindow = async h => { f.closed.push(h); shown = false; return { closed: true, text: `closed ${h} by WM_CLOSE` } }
+    f.host.shoot = async (folder, name) => {
+        f.shots.push(name); const text = shown ? 'Sign in' : 'File Edit Window'
+        await new Promise(r => setImmediate(r))
+        return { path: `${folder}/${name}.png`, lines: [{ x: 10, y: 0, right: 90, bottom: 15, text }] }
+    }
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    shown = true
+    await Promise.all([s.check('01-look-1-check'), s.check('01-look-2-check')])
+    assert.deepEqual([f.closed, f.shots, s.current()?.id], [['198658'], ['00-begin', '01-look-1-check', '01-look-1-check-closed', '01-look-2-check'], o.id])
+    await s.end(o.id)
+})
+
+test('close-on-stop.txt reads one window a line, and a missing file lists none', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const { loadCloseOnStop } = await import('../session/stop-words.js')
+    const dir = mkdtempSync(join(tmpdir(), 'close-'))
+    writeFileSync(join(dir, 'a.txt'), '# a comment\r\nDocker Desktop|Docker Desktop\r\n')
+    assert.deepEqual(loadCloseOnStop(join(dir, 'a.txt')), [{ process: 'Docker Desktop', title: 'Docker Desktop' }])
+    assert.deepEqual(loadCloseOnStop(join(dir, 'none.txt')), [])
+    writeFileSync(join(dir, 'b.txt'), 'Docker Desktop\n')
+    assert.throws(() => loadCloseOnStop(join(dir, 'b.txt')), /is not '<process>\|<title text>'/)
 })

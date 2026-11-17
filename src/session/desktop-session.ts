@@ -2,7 +2,9 @@
 // wildcard-queue.groovy. A session waits its turn for the lock (1114-18) and its minutes start when held. Acting goes through act(); a stop word ends it.
 import { randomBytes } from 'node:crypto'
 import type { TextLine } from '../services/windows/helper.js'
-import { stopHit } from './stop-words.js'
+import { stopHits, type CloseRule } from './stop-words.js'
+
+export interface ListedWindow { handle: string, l: number, t: number, r: number, b: number, title: string }
 
 /** A hold of Global\NamecBuild on its way: `token` once the lock script names it, `held` once it holds (with that token). */
 export interface Hold { token: Promise<string>, held: Promise<string> }
@@ -23,6 +25,9 @@ export interface SessionHost {
     /** The window that has the input, for a STOP line's screen. */
     foreground(): Promise<string>
     stopPattern(): RegExp
+    closeOnStop(): CloseRule[]
+    windowsOf(rule: CloseRule): Promise<ListedWindow[]>
+    closeWindow(handle: string): Promise<{ closed: boolean, text: string }>
     folderFor(started: Date, agent: string): Promise<string>
     log(folder: string, line: string): Promise<void>
     saveState(state: OpenSession | null): Promise<void>
@@ -52,6 +57,8 @@ export class DesktopSessions {
     private cancelExpiry: (() => void) | null = null
     private cancelClaim: (() => void) | null = null
     private pattern: RegExp | null = null
+    private closeRules: CloseRule[] = []
+    private checking: Promise<unknown> = Promise.resolve()
 
     constructor(private host: SessionHost) {}
 
@@ -64,6 +71,7 @@ export class DesktopSessions {
         if (this.open) throw new Error(`a session is open: ${this.open.agent}, '${this.open.what}', ${this.open.phase === 'held' ? `until ${this.open.deadline}` : 'queued for the lock'}`)
         const busy = await this.host.lockBusy()
         this.pattern = this.host.stopPattern()
+        this.closeRules = this.host.closeOnStop()
         const started = this.host.now()
         const folder = await this.host.folderFor(started, agent)
         const s: OpenSession = { id: randomBytes(6).toString('hex'), agent, what: what.trim(), started: Utc(started), deadline: '', token: '', folder, actions: 0, phase: 'queued', minutes }
@@ -172,18 +180,46 @@ export class DesktopSessions {
         return result
     }
 
-    /** A shot of the screen inside the held session, read for stop words; a hit ends the session and throws `STOP: <screen>: <why>`. */
-    async check(name: string): Promise<{ path: string, lines: TextLine[] }> {
+    /** A shot of the screen inside the held session, read for stop words; a hit ends the session and throws `STOP: <screen>: <why>`. One check at a time: a shot taken while another check closes a window would read the window as it was. */
+    check(name: string): Promise<{ path: string, lines: TextLine[] }> {
+        const mine = this.checking.then(() => this.checkNow(name))
+        this.checking = mine.catch(() => undefined)
+        return mine
+    }
+
+    private async checkNow(name: string): Promise<{ path: string, lines: TextLine[] }> {
         const s = this.open
         if (!s || s.phase !== 'held' || !this.pattern) throw new Error('no session holds the lock')
-        const shot = await this.host.shoot(s.folder, name)
-        const hit = stopHit(shot.lines, this.pattern)
-        if (hit) {
-            const stop = `STOP: ${await this.host.foreground()}: it shows "${hit.text}" at (${hit.x}, ${hit.y}) (${shot.path})`
+        let shot = await this.host.shoot(s.folder, name)
+        let hits = stopHits(shot.lines, this.pattern)
+        let why = ''
+        if (hits.length) {
+            const closing = await this.closeAround(s, hits)
+            why = closing.why
+            if (closing.closed) {
+                shot = await this.host.shoot(s.folder, `${name}-closed`)
+                hits = stopHits(shot.lines, this.pattern)
+            }
+        }
+        if (hits.length) {
+            const hit = hits[0]
+            const stop = `STOP: ${await this.host.foreground()}: it shows "${hit.text}" at (${hit.x}, ${hit.y}) (${shot.path})${why ? `; ${why}` : ''}`
             await this.end(s.id, stop)
             throw new StopError(stop)
         }
         return shot
+    }
+
+    /** Closes the close-on-stop window that holds every hit, if one does; once a check, so a hit after it stops. */
+    private async closeAround(s: OpenSession, hits: TextLine[]): Promise<{ closed: boolean, why: string }> {
+        for (const rule of this.closeRules) {
+            const around = (await this.host.windowsOf(rule)).find(w => hits.every(h => h.x >= w.l && h.right <= w.r && h.y >= w.t && h.bottom <= w.b))
+            if (!around) continue
+            const close = await this.host.closeWindow(around.handle)
+            await this.host.log(s.folder, `${Utc(this.host.now())} ${s.agent} close-on-stop ${rule.process} '${around.title}' for "${hits.map(h => h.text).join('" "')}": ${close.text}`)
+            return close.closed ? { closed: true, why: `after closing ${rule.process} '${around.title}'` } : { closed: false, why: `${rule.process} '${around.title}' would not close: ${close.text}` }
+        }
+        return { closed: false, why: '' }
     }
 
     /** At start: a session the last run left is closed: a held one's lock released, a queued one's hold called off by its token. */
