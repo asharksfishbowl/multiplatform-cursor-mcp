@@ -29,4 +29,5 @@ export function loadConfig(argv: string[]): Config {
 export const paths = (c: Config) => ({
     lock: path.join(c.checkout, 'Tools', 'Build', 'namec-build-lock.ps1'),
     stopPattern: path.join(c.checkout, 'Tools', 'Desktop', 'stop-pattern.txt'),
+    closeOnStop: path.join(c.checkout, 'Tools', 'Desktop', 'close-on-stop.txt'),
 })

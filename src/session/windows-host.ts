@@ -6,7 +6,8 @@ import path from 'node:path'
 import { Config, paths } from '../config.js'
 import { screenshot, readText } from '../services/windows/screen.js'
 import { foregroundWindow } from '../services/window-manager/windows-manager.js'
-import { loadStopPattern } from './stop-words.js'
+import { helper } from '../services/windows/helper.js'
+import { loadCloseOnStop, loadStopPattern } from './stop-words.js'
 import type { OpenSession, SessionHost } from './desktop-session.js'
 
 function lockScript(c: Config, args: string[]): Promise<{ code: number, out: string }> {
@@ -63,6 +64,18 @@ export function windowsHost(c: Config): SessionHost {
         },
         foreground: foregroundWindow,
         stopPattern: () => loadStopPattern(p.stopPattern),
+        closeOnStop: () => loadCloseOnStop(p.closeOnStop),
+        async windowsOf(rule) {
+            return (await helper('listed', rule.process, rule.title)).split(/\r?\n/).filter(Boolean).map(line => {
+                const m = /^(\d+) (-?\d+),(-?\d+),(-?\d+),(-?\d+) (.*)$/.exec(line)
+                if (!m) throw new Error(`not a listed window: ${line}`)
+                return { handle: m[1], l: +m[2], t: +m[3], r: +m[4], b: +m[5], title: m[6] }
+            })
+        },
+        async closeWindow(handle) {
+            const text = await helper('close', handle)
+            return { closed: text.startsWith('closed '), text }
+        },
         async folderFor(started, agent) {
             const folder = path.join(c.shots, `${started.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')}-${agent}`)
             await mkdir(folder, { recursive: true })

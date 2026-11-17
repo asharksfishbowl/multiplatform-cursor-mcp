@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type { TextLine } from '../services/windows/helper.js'
 
 // The pattern is the N.A.M.E.C checkout's Tools/Desktop/stop-pattern.txt, the one fab-add-packs.ps1's StopCheck reads: one regular expression,
@@ -9,7 +9,23 @@ export function loadStopPattern(file: string): RegExp {
     return new RegExp(lines[0], 'i')
 }
 
-/** The first line of text that matches, or null. */
 export function stopHit(lines: TextLine[], pattern: RegExp): TextLine | null {
     return lines.find(l => pattern.test(l.text)) ?? null
+}
+
+export function stopHits(lines: TextLine[], pattern: RegExp): TextLine[] {
+    return lines.filter(l => pattern.test(l.text))
+}
+
+/** A window a session may close when every stop hit lies inside it: its exact process name and text its title holds. */
+export interface CloseRule { process: string, title: string }
+
+// Tools/Desktop/close-on-stop.txt beside the pattern: '<process>|<title text>' a line, '#' lines skipped; no file, no window.
+export function loadCloseOnStop(file: string): CloseRule[] {
+    if (!existsSync(file)) return []
+    return readFileSync(file, 'utf8').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => {
+        const [process, title, ...rest] = l.split('|').map(x => x.trim())
+        if (!process || !title || rest.length) throw new Error(`${file}: '${l}' is not '<process>|<title text>'`)
+        return { process, title }
+    })
 }

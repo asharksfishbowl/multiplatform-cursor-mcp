@@ -11,6 +11,7 @@ public static class Dk {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -97,6 +98,18 @@ switch ($Action) {
     $All = Windows
     if ($Arg) { $All = @($All | Where-Object { $_.Process -eq $Arg -or $_.Title -like "*$Arg*" }) }
     foreach ($W in $All) { Line $W }
+  }
+  # listed <process> <title text>: 'handle l,t,r,b title' for each such window not minimized, the process exact.
+  'listed' {
+    foreach ($W in @(Windows | Where-Object { $_.Process -eq $Arg -and $_.Title -like "*$Arg2*" -and -not $_.Minimized })) { "$($W.Handle) $($W.L),$($W.T),$($W.R),$($W.B) $($W.Title)" }
+  }
+  # close <handle>: WM_CLOSE, as the window's own X; nothing is pressed. 'closed' once it is not visible, within 5 s.
+  'close' {
+    $H = [IntPtr][long]$Arg
+    if (-not [Dk]::PostMessage($H, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)) { "not closed: WM_CLOSE was not posted to $Arg"; break }
+    $Until = (Get-Date).AddSeconds(5)
+    while ([Dk]::IsWindowVisible($H) -and (Get-Date) -lt $Until) { Start-Sleep -Milliseconds 200 }
+    if ([Dk]::IsWindowVisible($H)) { "not closed: $Arg still visible 5 s after WM_CLOSE" } else { "closed $Arg by WM_CLOSE" }
   }
   # foreground: the window that has the input now.
   'foreground' {
