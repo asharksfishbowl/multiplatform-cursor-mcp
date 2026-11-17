@@ -318,6 +318,23 @@ test('a match still on screen after the close stops, and the window is closed on
     assert.deepEqual([pressed, f.closed], [false, ['198658']])
 })
 
+test('a check made while another closes the window waits for it, and sees the screen after the close', async () => {
+    const f = fake(); let shown = false
+    f.host.windowsOf = async () => shown ? docker() : []
+    f.host.closeWindow = async h => { f.closed.push(h); shown = false; return { closed: true, text: `closed ${h} by WM_CLOSE` } }
+    f.host.shoot = async (folder, name) => {
+        f.shots.push(name); const text = shown ? 'Sign in' : 'File Edit Window'
+        await new Promise(r => setImmediate(r))
+        return { path: `${folder}/${name}.png`, lines: [{ x: 10, y: 0, right: 90, bottom: 15, text }] }
+    }
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('builder4', 'x', 5)
+    shown = true
+    await Promise.all([s.check('01-look-1-check'), s.check('01-look-2-check')])
+    assert.deepEqual([f.closed, f.shots, s.current()?.id], [['198658'], ['00-begin', '01-look-1-check', '01-look-1-check-closed', '01-look-2-check'], o.id])
+    await s.end(o.id)
+})
+
 test('close-on-stop.txt reads one window a line, and a missing file lists none', async () => {
     const { mkdtempSync, writeFileSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
     const { loadCloseOnStop } = await import('../session/stop-words.js')

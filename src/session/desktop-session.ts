@@ -58,6 +58,7 @@ export class DesktopSessions {
     private cancelClaim: (() => void) | null = null
     private pattern: RegExp | null = null
     private closeRules: CloseRule[] = []
+    private checking: Promise<unknown> = Promise.resolve()
 
     constructor(private host: SessionHost) {}
 
@@ -179,8 +180,14 @@ export class DesktopSessions {
         return result
     }
 
-    /** A shot of the screen inside the held session, read for stop words; a hit ends the session and throws `STOP: <screen>: <why>`. */
-    async check(name: string): Promise<{ path: string, lines: TextLine[] }> {
+    /** A shot of the screen inside the held session, read for stop words; a hit ends the session and throws `STOP: <screen>: <why>`. One check at a time: a shot taken while another check closes a window would read the window as it was. */
+    check(name: string): Promise<{ path: string, lines: TextLine[] }> {
+        const mine = this.checking.then(() => this.checkNow(name))
+        this.checking = mine.catch(() => undefined)
+        return mine
+    }
+
+    private async checkNow(name: string): Promise<{ path: string, lines: TextLine[] }> {
         const s = this.open
         if (!s || s.phase !== 'held' || !this.pattern) throw new Error('no session holds the lock')
         let shot = await this.host.shoot(s.folder, name)
