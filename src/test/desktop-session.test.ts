@@ -345,3 +345,15 @@ test('close-on-stop.txt reads one window a line, and a missing file lists none',
     writeFileSync(join(dir, 'b.txt'), 'Docker Desktop\n')
     assert.throws(() => loadCloseOnStop(join(dir, 'b.txt')), /is not '<process>\|<title text>'/)
 })
+
+test('a -Status that timed out is an unknown lock: begin answers queued at once and its hold decides the turn (1122-2)', async () => {
+    const f = fake(); f.queueBehind('unknown: namec-build-lock -Status timed out after 30 s (capture C:\\hangs\\20261122T080000Z-4242)')
+    const s = new DesktopSessions(f.host)
+    const o = await s.begin('tools-builder', 'x', 5)
+    assert.deepEqual([o.phase, f.held], ['queued', ['desktop tools-builder']])
+    assert.match(f.queue[0], /Global\\NamecBuild is unknown: namec-build-lock -Status timed out after 30 s \(capture C:\\hangs\\20261122T080000Z-4242\); the session takes its turn/)
+    await f.holdNow()
+    assert.equal(o.phase, 'held')
+    await s.end(o.id)
+    assert.deepEqual(f.released, ['tok456'])
+})

@@ -40,6 +40,9 @@ node build/index.js --config <file.json>
 ```
 
 The config: `{ "host": "127.0.0.1", "port": 8010, "tokenFile": "…", "checkout": "C:\\…\\N.A.M.E.C", "queue": "…\\wildcard-queue.groovy", "shots": "…", "engineRoot": "C:\\Program Files\\Epic Games\\UE_5.8", "stateFile": "…" }`.
+Optional: `"lockTimeoutSeconds": 30`, the bound on each lock script call. Past it begin_session answers queued and its hold decides the turn,
+and the hung call is captured before it is killed, in `hangs\<UTC>-<pid>\` beside `stateFile`: `trace.txt` (its Set-PSDebug trace so far; the last line is where it stopped),
+`process.txt` (threads with wait reasons, modules), `children.txt`, `tasklist.txt`.
 Run it in the desktop session it drives (a scheduled task at sign-in, `/IT`): input and screenshots from another session, as ssh's, reach nothing.
 N.A.M.E.C's `Tools/Desktop/register-desktop-mcp.ps1` installs, configures and starts it that way.
 
