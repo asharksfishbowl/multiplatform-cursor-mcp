@@ -15,6 +15,8 @@ export interface Config {
     engineRoot: string
     /** An open session, recorded so a restart closes what the last run left open. */
     stateFile: string
+    /** A lock script call's bound in seconds (default 30, windows-host's LockTimeoutS); a hang's capture goes beside stateFile, in hangs\\. */
+    lockTimeoutSeconds?: number
 }
 
 export function loadConfig(argv: string[]): Config {
