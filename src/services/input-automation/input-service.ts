@@ -3,6 +3,7 @@
 import { keyboard, mouse, screen, Point, Button, Key } from '@nut-tree-fork/nut-js'
 import { helper } from '../windows/helper.js'
 import { keyName, pressChord } from './keys.js'
+import { drag as dragAlong } from './drag.js'
 
 mouse.config.autoDelayMs = 40
 mouse.config.mouseSpeed = 4000
@@ -26,6 +27,16 @@ export async function click(x: number, y: number, button: 'left' | 'right' = 'le
     await move(x, y)
     const b = button === 'right' ? Button.RIGHT : Button.LEFT
     if (double) await mouse.doubleClick(b); else await mouse.click(b)
+}
+
+/** Left button pressed at `from`, moved in steps, released at `to` (a file dragged from Explorer onto a page); released on any error. */
+export async function drag(fromX: number, fromY: number, toX: number, toY: number): Promise<void> {
+    await dragAlong({
+        moveTo: async (x, y) => mouse.setPosition(await at(x, y)),
+        press: () => mouse.pressButton(Button.LEFT),
+        release: () => mouse.releaseButton(Button.LEFT),
+        pause: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    }, fromX, fromY, toX, toY)
 }
 
 /** amount > 0 scrolls down, < 0 up, in wheel notches. */

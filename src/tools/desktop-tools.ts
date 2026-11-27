@@ -83,6 +83,9 @@ export function registerTools(server: McpServer, c: Config, sessions: DesktopSes
         a => act(a, 'click', `${a.x},${a.y} ${a.button ?? 'left'}${a.double ? ' double' : ''}`, async () => { await input.click(a.x, a.y, a.button, a.double); return `clicked ${a.x},${a.y}` }))
     tool('move', 'Moves the pointer to a desktop pixel (a hover).', { session, x, y },
         a => act(a, 'move', `${a.x},${a.y}`, async () => { await input.move(a.x, a.y); return `pointer at ${a.x},${a.y}` }))
+    tool('drag', 'Drags with the left button: pressed at from, moved in steps, held over to, released there (a file from Explorer onto a page\'s drop zone).',
+        { session, fromX: x, fromY: y, toX: x, toY: y },
+        a => act(a, 'drag', `${a.fromX},${a.fromY} to ${a.toX},${a.toY}`, async () => { await input.drag(a.fromX, a.fromY, a.toX, a.toY); return `dragged ${a.fromX},${a.fromY} to ${a.toX},${a.toY}` }))
     tool('scroll', 'Scrolls at a desktop pixel: amount > 0 down, < 0 up, in wheel notches.', { session, x, y, amount: z.number().int() },
         a => act(a, 'scroll', `${a.x},${a.y} ${a.amount}`, async () => { await input.scroll(a.x, a.y, a.amount); return `scrolled ${a.amount} at ${a.x},${a.y}` }))
     const held = async (names: string[], f: () => Promise<string>) => {
